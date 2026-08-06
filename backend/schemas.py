@@ -121,4 +121,3 @@ class ProductUpdate(BaseModel):
 class ProductStatusUpdate(BaseModel):
     id: int
     status: str
-

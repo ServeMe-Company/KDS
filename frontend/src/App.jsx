@@ -47,6 +47,15 @@ function App() {
       })
       .then((data) => {
         setError('');
+        if (data.categories) {
+          data.categories = data.categories.map(category => ({
+            ...category,
+            menu_items: category.menu_items.map(item => ({
+              ...item,
+              category_name: category.name
+            }))
+          }));
+        }
         setRestaurant(data);
         if (data.categories && data.categories.length > 0) {
           setActiveCategory(data.categories[0].id);
@@ -97,18 +106,30 @@ function App() {
     }
   }, [activeCategory]);
 
-  // Adjust activeCategory if the current active category is filtered out by search
-  useEffect(() => {
-    if (filteredCategories.length > 0) {
-      const isActiveVisible = filteredCategories.some(cat => cat.id === activeCategory);
-      if (!isActiveVisible) {
-        setActiveCategory(filteredCategories[0].id);
+  const handleSearchChange = (val) => {
+    setSearchQuery(val);
+    
+    if (val.trim() && restaurant) {
+      // Find categories that have matching items for this new search query
+      const matchingCats = restaurant.categories.filter((category) =>
+        category.menu_items.some((item) =>
+          item.name.toLowerCase().includes(val.toLowerCase())
+        )
+      );
+      
+      if (matchingCats.length > 0) {
+        // If current activeCategory is NOT in the matching categories, switch to the first matching category
+        const isCurrentActiveMatching = matchingCats.some(cat => cat.id === activeCategory);
+        if (!isCurrentActiveMatching) {
+          setActiveCategory(matchingCats[0].id);
+        }
       }
     }
-  }, [filteredCategories, activeCategory]);
+  };
 
   const handleCategoryClick = (e, catId) => {
     e.preventDefault();
+    setSearchQuery('');
     setActiveCategory(catId);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -285,20 +306,6 @@ function App() {
         </div>
       </header>
 
-      {/* Horizontal Categories Menu */}
-      <div className="categories-nav">
-        {filteredCategories.map((cat) => (
-          <a
-            key={cat.id}
-            href={`#category-${cat.id}`}
-            className={`category-pill ${activeCategory === cat.id ? 'active' : ''}`}
-            onClick={(e) => handleCategoryClick(e, cat.id)}
-          >
-            {cat.name}
-          </a>
-        ))}
-      </div>
-
       {/* Search Bar */}
       <div className="search-container">
         <input
@@ -306,97 +313,165 @@ function App() {
           className="search-input"
           placeholder="🔍  Search delicious dishes..."
           value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
+          onChange={(e) => handleSearchChange(e.target.value)}
         />
       </div>
 
-      {/* Menu Items List */}
-      <main className="menu-list">
-        {filteredCategories
-          .filter((category) => category.id === activeCategory)
-          .map((category) => (
-            <div key={category.id} className="category-section">
-              <h2 className="category-title">{category.name}</h2>
-              <div className="menu-items-grid">
-                {category.menu_items.map((item) => (
-                  <div key={item.id} className="menu-item-card">
-                    {item.image_url && (
-                      <img src={item.image_url} alt={item.name} className="item-thumbnail" />
-                    )}
-                    <div className="item-details">
-                      <div className="item-title-row">
-                        {item.is_veg !== undefined && (
-                          <span className={`veg-indicator ${item.is_veg ? 'veg' : 'non-veg'}`}>
-                            <span className="dot"></span>
-                          </span>
-                        )}
-                        <h3 className="item-name">{item.name}</h3>
-                        {item.is_spicy && <span className="spicy-icon" title="Spicy">🌶️</span>}
-                      </div>
-                      <p className="item-price">₹{item.price}</p>
-                      {item.description && <p className="item-desc">{item.description}</p>}
-                      
-                      {item.stock !== undefined && item.stock !== null && item.stock > 0 && item.stock <= 5 && (
-                        <p className="low-stock-warning">⚠️ Only {item.stock} left!</p>
-                      )}
-                      {item.stock !== undefined && item.stock !== null && item.stock <= 0 && (
-                        <p className="out-of-stock-warning">🚫 Out of stock</p>
-                      )}
-
-                      {cart[item.id] && (
-                        <div className="instructions-area">
-                          <div className="quick-notes-container">
-                            {['🌶️ Spicy', '🚫 No Onion', '🚫 No Garlic', '🧀 More Cheese', '🧂 Less Salt'].map((option) => {
-                              const isSelected = (cart[item.id].notes || '').includes(option);
-                              return (
-                                <button
-                                  key={option}
-                                  className={`quick-note-chip ${isSelected ? 'selected' : ''}`}
-                                  onClick={() => toggleQuickNote(item.id, option)}
-                                >
-                                  {option}
-                                </button>
-                              );
-                            })}
-                          </div>
-                          <input
-                            type="text"
-                            className="cart-item-notes-input"
-                            placeholder="Or type other instructions..."
-                            value={cart[item.id].notes || ''}
-                            onChange={(e) => updateCartItemNotes(item.id, e.target.value)}
-                          />
-                        </div>
-                      )}
-                    </div>
-                    
-                    <div className="item-action-area">
-                      {item.stock !== undefined && item.stock !== null && item.stock <= 0 ? (
-                        <button className="add-btn out-of-stock" disabled>
-                          Out of Stock
-                        </button>
-                      ) : cart[item.id] ? (
-                        <div className="quantity-control">
-                          <button className="qty-btn" onClick={() => removeFromCart(item.id)}>-</button>
-                          <span className="qty-text">{cart[item.id].quantity}</span>
-                          <button 
-                            className="qty-btn" 
-                            onClick={() => addToCart(item)}
-                            disabled={item.stock !== undefined && item.stock !== null && cart[item.id].quantity >= item.stock}
-                          >+</button>
-                        </div>
-                      ) : (
-                        <button className="add-btn" onClick={() => addToCart(item)}>
-                          Add
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+      <div className="main-content-layout">
+        {/* Horizontal/Vertical Categories Menu */}
+        <div className="categories-nav">
+          {restaurant.categories.map((cat) => (
+            <a
+              key={cat.id}
+              href={`#category-${cat.id}`}
+              className={`category-pill ${activeCategory === cat.id ? 'active' : ''}`}
+              onClick={(e) => handleCategoryClick(e, cat.id)}
+            >
+              {cat.name}
+            </a>
           ))}
-      </main>
+        </div>
+
+        {/* Menu Items List */}
+        <main className="menu-list">
+          {restaurant.categories
+            .filter((category) => category.id === activeCategory)
+            .map((category) => {
+              const matchingItems = category.menu_items.filter((item) =>
+                item.name.toLowerCase().includes(searchQuery.toLowerCase())
+              );
+              
+              return (
+                <div key={category.id} className="category-section">
+                  <h2 className="category-title">{category.name}</h2>
+                  {category.menu_items.length === 0 ? (
+                    <div className="empty-category-state" style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '40px 20px',
+                      textAlign: 'center',
+                      color: '#94a3b8'
+                    }}>
+                      <svg width="44" height="44" viewBox="0 0 24 24" fill="#0070c0" style={{ marginBottom: '8px' }}>
+                        <rect x="1" y="4" width="13" height="11" rx="1" />
+                        <path d="M14 7h4.5a1.5 1.5 0 0 1 1.2.6l2.1 2.8c.2.3.3.6.3 1v3.6h-8.1V7z" />
+                        <rect x="15.5" y="8.5" width="4.5" height="3" rx="0.5" fill="#94a3b8" />
+                        <circle cx="5" cy="17" r="2.5" fill="#0070c0" />
+                        <circle cx="5" cy="17" r="0.9" fill="#ffffff" />
+                        <circle cx="17" cy="17" r="2.5" fill="#0070c0" />
+                        <circle cx="17" cy="17" r="0.9" fill="#ffffff" />
+                      </svg>
+                      <p style={{ fontSize: '13px', fontWeight: 600 }}>This category is empty</p>
+                      <p style={{ fontSize: '11px', color: '#cbd5e1', marginTop: '2px' }}>No items listed in this category yet</p>
+                    </div>
+                  ) : matchingItems.length === 0 ? (
+                    <div className="empty-category-state" style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '40px 20px',
+                      textAlign: 'center',
+                      color: '#94a3b8'
+                    }}>
+                      <span style={{ fontSize: '32px', marginBottom: '8px' }}>🔍</span>
+                      <p style={{ fontSize: '13px', fontWeight: 600 }}>No items matching "{searchQuery}"</p>
+                      <p style={{ fontSize: '11px', color: '#cbd5e1', marginTop: '2px' }}>Try searching in another category or clear the query</p>
+                    </div>
+                  ) : (
+                    <div className="menu-items-grid">
+                      {matchingItems.map((item) => (
+                        <div key={item.id} className="menu-item-card">
+                          {item.image_url ? (
+                            <img src={item.image_url} alt={item.name} className="item-thumbnail" />
+                          ) : (
+                            <div className="item-thumbnail placeholder-thumbnail">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ width: '28px', height: '28px', color: '#64748b' }}>
+                                <path d="M3 18h18" />
+                                <path d="M5 18a7 7 0 0 1 14 0H5z" fill="rgba(100, 116, 139, 0.1)" />
+                                <circle cx="12" cy="10" r="1" />
+                              </svg>
+                            </div>
+                          )}
+                          <div className="item-details">
+                            <div className="item-title-row">
+                              {item.is_veg !== undefined && (
+                                <span className={`veg-indicator ${item.is_veg ? 'veg' : 'non-veg'}`}>
+                                  <span className="dot"></span>
+                                </span>
+                              )}
+                              <h3 className="item-name">{item.name}</h3>
+                              {item.is_spicy && <span className="spicy-icon" title="Spicy">🌶️</span>}
+                            </div>
+                            <p className="item-price">₹{item.price}</p>
+                            {item.description && <p className="item-desc">{item.description}</p>}
+                            
+                            {item.stock !== undefined && item.stock !== null && item.stock > 0 && item.stock <= 5 && (
+                              <p className="low-stock-warning">⚠️ Only {item.stock} left!</p>
+                            )}
+                            {item.stock !== undefined && item.stock !== null && item.stock <= 0 && (
+                              <p className="out-of-stock-warning">🚫 Out of stock</p>
+                            )}
+
+                            {cart[item.id] && !(item.category_name && (item.category_name.toLowerCase() === 'drinks' || item.category_name.toLowerCase() === 'beverages')) && (
+                              <div className="instructions-area">
+                                <div className="quick-notes-container">
+                                  {['🌶️ Spicy', '🚫 No Onion', '🚫 No Garlic', '🧀 More Cheese', '🧂 Less Salt'].map((option) => {
+                                    const isSelected = (cart[item.id].notes || '').includes(option);
+                                    return (
+                                      <button
+                                        key={option}
+                                        className={`quick-note-chip ${isSelected ? 'selected' : ''}`}
+                                        onClick={() => toggleQuickNote(item.id, option)}
+                                      >
+                                        {option}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                                <input
+                                  type="text"
+                                  className="cart-item-notes-input"
+                                  placeholder="Or type other instructions..."
+                                  value={cart[item.id].notes || ''}
+                                  onChange={(e) => updateCartItemNotes(item.id, e.target.value)}
+                                />
+                              </div>
+                            )}
+                          </div>
+                          
+                          <div className="item-action-area">
+                            {item.stock !== undefined && item.stock !== null && item.stock <= 0 ? (
+                              <button className="add-btn out-of-stock" disabled>
+                                Out of Stock
+                              </button>
+                            ) : cart[item.id] ? (
+                              <div className="quantity-control">
+                                <button className="qty-btn" onClick={() => removeFromCart(item.id)}>-</button>
+                                <span className="qty-text">{cart[item.id].quantity}</span>
+                                <button 
+                                  className="qty-btn" 
+                                  onClick={() => addToCart(item)}
+                                  disabled={item.stock !== undefined && item.stock !== null && cart[item.id].quantity >= item.stock}
+                                >+</button>
+                              </div>
+                            ) : (
+                              <button className="add-btn" onClick={() => addToCart(item)}>
+                                Add
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+        </main>
+      </div>
 
       {/* Sticky Cart Footer with Collapsible Drawer */}
       {totalItems > 0 && (
@@ -446,29 +521,31 @@ function App() {
                         </div>
                         <span style={{ fontWeight: 700, fontSize: '14px' }}>₹{item.price * item.quantity}</span>
                       </div>
-                      <div className="instructions-area">
-                        <div className="quick-notes-container">
-                          {['🌶️ Spicy', '🚫 No Onion', '🚫 No Garlic', '🧀 More Cheese', '🧂 Less Salt'].map((option) => {
-                            const isSelected = (item.notes || '').includes(option);
-                            return (
-                              <button
-                                key={option}
-                                className={`quick-note-chip ${isSelected ? 'selected' : ''}`}
-                                onClick={() => toggleQuickNote(item.id, option)}
-                              >
-                                {option}
-                              </button>
-                            );
-                          })}
+                      {!(item.category_name && (item.category_name.toLowerCase() === 'drinks' || item.category_name.toLowerCase() === 'beverages')) && (
+                        <div className="instructions-area">
+                          <div className="quick-notes-container">
+                            {['🌶️ Spicy', '🚫 No Onion', '🚫 No Garlic', '🧀 More Cheese', '🧂 Less Salt'].map((option) => {
+                              const isSelected = (item.notes || '').includes(option);
+                              return (
+                                <button
+                                  key={option}
+                                  className={`quick-note-chip ${isSelected ? 'selected' : ''}`}
+                                  onClick={() => toggleQuickNote(item.id, option)}
+                                >
+                                  {option}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <input
+                            type="text"
+                            className="cart-item-notes-input"
+                            placeholder="Or type other instructions..."
+                            value={item.notes || ''}
+                            onChange={(e) => updateCartItemNotes(item.id, e.target.value)}
+                          />
                         </div>
-                        <input
-                          type="text"
-                          className="cart-item-notes-input"
-                          placeholder="Or type other instructions..."
-                          value={item.notes || ''}
-                          onChange={(e) => updateCartItemNotes(item.id, e.target.value)}
-                        />
-                      </div>
+                      )}
                     </div>
                   ))}
                 </div>

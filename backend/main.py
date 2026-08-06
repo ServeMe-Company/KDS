@@ -305,6 +305,116 @@ async def update_order_status(order_id: int, status_update: schemas.OrderStatusU
     return db_order
 
 
+@app.get("/api/kitchen/orders")
+def get_kitchen_orders_api(restaurant_id: int = 1, db: Session = Depends(get_db)):
+    orders = db.query(models.Order).options(
+        joinedload(models.Order.items).joinedload(models.OrderItem.menu_item).joinedload(models.MenuItem.category)
+    ).filter(
+        models.Order.restaurant_id == restaurant_id
+    ).order_by(models.Order.created_at.asc()).all()
+
+    result = []
+    for order in orders:
+        if str(order.status).lower() == "completed":
+            continue
+        items_list = []
+        for item in order.items:
+            items_list.append({
+                "productId": str(item.menu_item_id),
+                "name": item.menu_item.name if item.menu_item else f"Item #{item.menu_item_id}",
+                "price": item.price_at_time_of_order,
+                "quantity": item.quantity,
+                "category": item.menu_item.category.name if (item.menu_item and item.menu_item.category) else "General"
+            })
+        
+        all_notes = [item.notes for item in order.items if item.notes]
+        
+        result.append({
+            "id": str(order.id),
+            "orderNumber": f"ORD-{order.order_number:03d}" if isinstance(order.order_number, int) else str(order.order_number),
+            "tableNumber": getattr(order, "table_number", None),
+            "tableName": getattr(order, "table_name", None),
+            "tableId": getattr(order, "table_id", None),
+            "items": items_list,
+            "total": order.total_amount,
+            "status": order.status.capitalize() if order.status else "Pending",
+            "notes": ", ".join(all_notes) if all_notes else None,
+            "createdAt": order.created_at.isoformat() if order.created_at else None
+        })
+    return result
+
+
+@app.get("/api/kitchen/orders/{order_id}")
+def get_kitchen_order_by_id_api(order_id: str, db: Session = Depends(get_db)):
+    clean_id = order_id.replace("ORD-", "").lstrip("0") or "0"
+    db_order = None
+    if clean_id.isdigit():
+        db_order = db.query(models.Order).options(
+            joinedload(models.Order.items).joinedload(models.OrderItem.menu_item).joinedload(models.MenuItem.category)
+        ).filter(models.Order.id == int(clean_id)).first()
+    if not db_order:
+        db_order = db.query(models.Order).options(
+            joinedload(models.Order.items).joinedload(models.OrderItem.menu_item).joinedload(models.MenuItem.category)
+        ).filter(models.Order.id == order_id).first()
+    
+    if not db_order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    items_list = []
+    for item in db_order.items:
+        items_list.append({
+            "productId": str(item.menu_item_id),
+            "name": item.menu_item.name if item.menu_item else f"Item #{item.menu_item_id}",
+            "price": item.price_at_time_of_order,
+            "quantity": item.quantity,
+            "category": item.menu_item.category.name if (item.menu_item and item.menu_item.category) else "General"
+        })
+
+    all_notes = [item.notes for item in db_order.items if item.notes]
+
+    return {
+        "id": str(db_order.id),
+        "orderNumber": f"ORD-{db_order.order_number:03d}" if isinstance(db_order.order_number, int) else str(db_order.order_number),
+        "tableNumber": getattr(db_order, "table_number", None),
+        "tableName": getattr(db_order, "table_name", None),
+        "tableId": getattr(db_order, "table_id", None),
+        "items": items_list,
+        "total": db_order.total_amount,
+        "status": db_order.status.capitalize() if db_order.status else "Pending",
+        "notes": ", ".join(all_notes) if all_notes else None,
+        "createdAt": db_order.created_at.isoformat() if db_order.created_at else None
+    }
+
+
+
+@app.patch("/api/kitchen/orders/{order_id}/status")
+async def update_kitchen_order_status_api(order_id: str, status_data: dict, db: Session = Depends(get_db)):
+    clean_id = order_id.replace("ORD-", "").lstrip("0") or "0"
+    db_order = None
+    if clean_id.isdigit():
+        db_order = db.query(models.Order).filter(models.Order.id == int(clean_id)).first()
+    if not db_order:
+        db_order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    
+    if not db_order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    new_status = status_data.get("status")
+    if new_status:
+        db_order.status = new_status.lower()
+        db.commit()
+        db.refresh(db_order)
+        await sio.emit("order_update", "UPDATE_ORDERS", room=f"restaurant_{db_order.restaurant_id}")
+
+    return {
+        "id": str(db_order.id),
+        "orderNumber": f"ORD-{db_order.order_number:03d}" if isinstance(db_order.order_number, int) else str(db_order.order_number),
+        "total": db_order.total_amount,
+        "status": db_order.status.capitalize()
+    }
+
+
+
 # 8. ADMIN: Generate a printable QR Code for the restaurant
 @app.get("/restaurants/{restaurant_id}/qrcode")
 def generate_restaurant_qrcode(restaurant_id: int, db: Session = Depends(get_db)):
