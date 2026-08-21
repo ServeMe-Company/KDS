@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { io } from 'socket.io-client';
-import { API_URL } from './config';
+import { API_URL, WS_URL } from './config';
 import { getKitchenOrders, updateKitchenOrderStatus, KitchenOrder } from './api/orders';
 import './kds.css';
+
 
 
 
@@ -220,7 +221,8 @@ export default function Kitchen() {
 
     const intervalId = window.setInterval(loadOrders, 1500);
 
-    const socket = io(API_URL, { path: '/socket.io' });
+    const socket = io(WS_URL, { path: '/socket.io', transports: ['websocket', 'polling'] });
+
     socket.on('connect', () => {
       socket.emit('join_restaurant', { restaurant_id: 1 });
     });

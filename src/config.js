@@ -1,10 +1,9 @@
 const getBackendUrls = () => {
   const hostname = window.location.hostname;
-  const protocol = window.location.protocol;
   
   const envApiUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL;
 
-  if (envApiUrl && !envApiUrl.includes(':3000')) {
+  if (envApiUrl) {
     const secure = envApiUrl.startsWith('https');
     const wsProto = secure ? 'wss' : 'ws';
     const cleanHost = envApiUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
@@ -14,32 +13,20 @@ const getBackendUrls = () => {
     };
   }
 
-  // On Vercel preview/production domains (*.vercel.app), fallback to window.location.origin
-  if (hostname.includes('vercel.app')) {
-    const wsProto = protocol === 'https:' ? 'wss' : 'ws';
+  // If running locally on localhost, connect to local dev server 8000
+  if (hostname === 'localhost' || hostname === '127.0.0.1') {
     return {
-      api: window.location.origin,
-      ws: `${wsProto}://${hostname}`
+      api: 'http://localhost:8000',
+      ws: 'ws://localhost:8000'
     };
   }
 
-  if (hostname.includes('serveme.in')) {
-    return {
-      api: 'https://vendor.serveme.in',
-      ws: 'wss://vendor.serveme.in'
-    };
-  }
-
-  const apiScheme = protocol === 'https:' ? 'https:' : 'http:';
-  const wsScheme = protocol === 'https:' ? 'wss:' : 'ws:';
-
+  // Default production fallback for standalone KDS (points to live Vendor backend)
   return {
-    api: `${apiScheme}//${hostname}:8000`,
-    ws: `${wsScheme}//${hostname}:8000`
+    api: 'https://vendor.serveme.in',
+    ws: 'wss://vendor.serveme.in'
   };
 };
-
-
 
 const urls = getBackendUrls();
 
@@ -48,5 +35,3 @@ export const WS_URL = urls.ws;
 export const QR_MENU_BASE_URL = 'https://qr-menu.serveme.in';
 export const VENDOR_BASE_URL = 'https://vendor.serveme.in';
 export const IS_MISSING_CONFIG = false;
-
-
