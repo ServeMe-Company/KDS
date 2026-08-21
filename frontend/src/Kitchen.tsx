@@ -3,8 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { io } from 'socket.io-client';
 import { API_URL } from './config';
 import { getKitchenOrders, updateKitchenOrderStatus, KitchenOrder } from './api/orders';
-import './App.css';
 import './kds.css';
+
 
 
 // ─── Helper: format elapsed time in MM:SS or Hh MMm ──────────────────────────
