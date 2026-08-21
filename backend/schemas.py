@@ -67,6 +67,11 @@ class OrderItemCreate(BaseModel):
 
 class OrderCreate(BaseModel):
     items: List[OrderItemCreate]
+    qr_token: Optional[str] = None
+    table_number: Optional[int] = None
+    table_name: Optional[str] = None
+    table_id: Optional[int] = None
+    notes: Optional[str] = None
 
 class OrderItemResponse(BaseModel):
     id: int
@@ -84,6 +89,10 @@ class OrderResponse(BaseModel):
     id: int
     restaurant_id: int
     order_number: int
+    table_number: Optional[int] = None
+    table_name: Optional[str] = None
+    table_id: Optional[int] = None
+    qr_token: Optional[str] = None
     total_amount: float
     status: str
     created_at: Optional[datetime] = None
@@ -91,6 +100,7 @@ class OrderResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
 
 
 class OrderStatusUpdate(BaseModel):

@@ -92,22 +92,51 @@ def ensure_new_kitchen_columns():
         if inspector.has_table("order_items"):
             existing = {c["name"] for c in inspector.get_columns("order_items")}
             if "notes" not in existing:
-                if dialect == "mysql":
-                    conn.execute(text("ALTER TABLE order_items ADD COLUMN notes VARCHAR(500)"))
-                else:
-                    conn.execute(text("ALTER TABLE order_items ADD COLUMN notes VARCHAR(500)"))
+                conn.execute(text("ALTER TABLE order_items ADD COLUMN notes VARCHAR(500)"))
 
 ensure_new_kitchen_columns()
+
+
+def ensure_table_columns():
+    inspector = inspect(engine)
+    if not inspector.has_table("orders"):
+        return
+    existing = {c["name"] for c in inspector.get_columns("orders")}
+    with engine.begin() as conn:
+        if "table_id" not in existing:
+            conn.execute(text("ALTER TABLE orders ADD COLUMN table_id INT NULL"))
+        if "table_number" not in existing:
+            conn.execute(text("ALTER TABLE orders ADD COLUMN table_number INT NULL"))
+        if "table_name" not in existing:
+            conn.execute(text("ALTER TABLE orders ADD COLUMN table_name VARCHAR(100) NULL"))
+        if "qr_token" not in existing:
+            conn.execute(text("ALTER TABLE orders ADD COLUMN qr_token VARCHAR(255) NULL"))
+
+ensure_table_columns()
+
 
 app = FastAPI(title="ServeMe API")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/")
+def root():
+    return {
+        "name": "ServeMe API",
+        "status": "online",
+        "docs": "/docs",
+        "kitchen_orders": "/api/kitchen/orders",
+        "vendor_stats": "/api/vendor/stats"
+    }
+
+
+
 
 sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
 
@@ -235,14 +264,28 @@ async def place_order(restaurant_id: int, order_req: schemas.OrderCreate, db: Se
             )
         )
 
-    # 4. Create the main Order row
+    # 4. Resolve table details
+    tbl_num = order_req.table_number or 1
+    tbl_name = order_req.table_name or f"Table #{tbl_num:02d}"
+
+    if order_req.qr_token:
+        table_obj = db.query(models.DiningTable).filter(models.DiningTable.qr_token == order_req.qr_token).first()
+        if table_obj:
+            tbl_num = table_obj.table_number
+            tbl_name = table_obj.name
+
     db_order = models.Order(
         restaurant_id=restaurant_id,
         order_number=next_order_number,
-        total_amount=total_amount
+        total_amount=total_amount,
+        table_number=tbl_num,
+        table_name=tbl_name,
+        table_id=order_req.table_id,
+        qr_token=order_req.qr_token
     )
     db.add(db_order)
     db.flush() # This assigns an ID to db_order without finalizing the save yet
+
 
     # 5. Attach all the individual items to this Order
     for o_item in order_items:
@@ -329,11 +372,19 @@ def get_kitchen_orders_api(restaurant_id: int = 1, db: Session = Depends(get_db)
         
         all_notes = [item.notes for item in order.items if item.notes]
         
+        date_prefix = order.created_at.strftime("%Y%m%d") if order.created_at else "20260821"
+        order_num_str = f"SM-{date_prefix}-{order.order_number:04d}"
+        tbl_num = getattr(order, "table_number", None) or 1
+        tbl_name = getattr(order, "table_name", None) or f"Table #{tbl_num:02d}"
+
         result.append({
             "id": str(order.id),
-            "orderNumber": f"ORD-{order.order_number:03d}" if isinstance(order.order_number, int) else str(order.order_number),
-            "tableNumber": getattr(order, "table_number", None),
-            "tableName": getattr(order, "table_name", None),
+            "orderNumber": order_num_str,
+            "order_number": order_num_str,
+            "tableNumber": tbl_num,
+            "tableName": tbl_name,
+            "table_number": tbl_num,
+            "table_name": tbl_name,
             "tableId": getattr(order, "table_id", None),
             "items": items_list,
             "total": order.total_amount,
@@ -342,6 +393,7 @@ def get_kitchen_orders_api(restaurant_id: int = 1, db: Session = Depends(get_db)
             "createdAt": order.created_at.isoformat() if order.created_at else None
         })
     return result
+
 
 
 @app.get("/api/kitchen/orders/{order_id}")
@@ -415,14 +467,18 @@ async def update_kitchen_order_status_api(order_id: str, status_data: dict, db: 
 
 
 
+from fastapi import Request
+
 # 8. ADMIN: Generate a printable QR Code for the restaurant
 @app.get("/restaurants/{restaurant_id}/qrcode")
-def generate_restaurant_qrcode(restaurant_id: int, db: Session = Depends(get_db)):
+def generate_restaurant_qrcode(restaurant_id: int, request: Request, db: Session = Depends(get_db)):
     db_restaurant = db.query(models.Restaurant).filter(models.Restaurant.id == restaurant_id).first()
     if not db_restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
 
-    qr_url = f"http://localhost:5173/?restaurant_id={restaurant_id}"
+    table = db.query(models.DiningTable).filter(models.DiningTable.restaurant_id == restaurant_id).first()
+    qr_token = table.qr_token if table else "cfUmnVwm9GB1gD-2YS9e-mdLxgzvdtCh"
+    qr_url = f"https://qr-menu.serveme.in/?qr={qr_token}"
 
     qr = qrcode.QRCode(
         version=1,
@@ -432,6 +488,7 @@ def generate_restaurant_qrcode(restaurant_id: int, db: Session = Depends(get_db)
     )
     qr.add_data(qr_url)
     qr.make(fit=True)
+
 
     img = qr.make_image(fill_color="black", back_color="white")
 
@@ -476,14 +533,31 @@ async def upload_image(file: UploadFile = File(...)):
 @app.get("/api/vendor/stats")
 def get_vendor_stats(restaurant_id: int = 1, db: Session = Depends(get_db)):
     total_products = db.query(models.MenuItem).join(models.Category).filter(models.Category.restaurant_id == restaurant_id).count()
-    total_orders = db.query(models.Order).filter(models.Order.restaurant_id == restaurant_id).count()
-    total_payments = db.query(func.sum(models.Order.total_amount)).filter(models.Order.restaurant_id == restaurant_id).scalar() or 0.0
-    total_customers = db.query(models.Order.id).filter(models.Order.restaurant_id == restaurant_id).distinct().count()
+    all_orders = db.query(models.Order).filter(models.Order.restaurant_id == restaurant_id).all()
+    
+    total_orders = len(all_orders)
+    completed_orders = [o for o in all_orders if str(o.status).lower() == "completed"]
+    pending_orders = [o for o in all_orders if str(o.status).lower() == "pending"]
+    preparing_orders = [o for o in all_orders if str(o.status).lower() in ("preparing", "accepted", "cooking")]
+    cancelled_orders = [o for o in all_orders if str(o.status).lower() == "cancelled"]
+
+    total_sales = sum(o.total_amount for o in completed_orders)
+    total_payments = sum(o.total_amount for o in all_orders if str(o.status).lower() != "cancelled")
+    avg_order_value = (total_sales / len(completed_orders)) if completed_orders else 0.0
+    cancellation_rate = (len(cancelled_orders) / total_orders * 100.0) if total_orders > 0 else 0.0
+
     return {
+        "total_sales": total_sales,
         "total_orders": total_orders,
         "total_payments": total_payments,
         "total_products": total_products,
-        "total_customers": total_customers
+        "total_customers": len({o.id for o in all_orders}),
+        "completed_count": len(completed_orders),
+        "pending_count": len(pending_orders),
+        "preparing_count": len(preparing_orders),
+        "cancelled_count": len(cancelled_orders),
+        "avg_order_value": avg_order_value,
+        "cancellation_rate": cancellation_rate
     }
 
 
@@ -492,12 +566,37 @@ def get_orders(restaurant_id: int = 1, db: Session = Depends(get_db)):
     orders = db.query(models.Order).filter(models.Order.restaurant_id == restaurant_id).order_by(models.Order.id.desc()).all()
     result = []
     for order in orders:
+        created_str = order.created_at.strftime("%Y-%m-%dT%H:%M:%S.%fZ") if order.created_at else ""
+        date_prefix = order.created_at.strftime("%Y%m%d") if order.created_at else "20260821"
+        order_num_str = f"SM-{date_prefix}-{order.order_number:04d}"
+        tbl_str = order.table_name or (f"Table #{order.table_number:02d}" if order.table_number else "Table #01")
+        
         result.append({
-            "id": f"ORD-{order.id:03d}",
-            "date": order.created_at.strftime("%Y-%m-%d %H:%M") if order.created_at else "",
-            "customer": "Walk-in Customer",
+            "id": order.id,
+            "order_number": order_num_str,
+            "orderId": order_num_str,
+            "date": created_str,
+            "created_at": created_str,
+            "customer": tbl_str,
+            "customer_name": tbl_str,
             "mobile": "N/A",
-            "amount": order.total_amount
+            "amount": order.total_amount,
+            "total_amount": order.total_amount,
+            "status": str(order.status).upper(),
+            "status_raw": str(order.status).lower(),
+            "table_number": order.table_number or 1,
+            "table_name": tbl_str,
+            "qr_token": order.qr_token,
+            "items": [
+                {
+                    "id": item.id,
+                    "name": item.menu_item.name if item.menu_item else f"Item #{item.menu_item_id}",
+                    "quantity": item.quantity,
+                    "price": item.price_at_time_of_order,
+                    "notes": item.notes
+                }
+                for item in order.items
+            ]
         })
     return result
 
@@ -517,6 +616,72 @@ def delete_all_orders(restaurant_id: int = 1, db: Session = Depends(get_db)):
     db.query(models.Order).filter(models.Order.restaurant_id == restaurant_id).delete()
     db.commit()
     return {"message": "All orders deleted successfully"}
+
+
+# --- TABLE & QR TOKEN ENDPOINTS ---
+
+@app.get("/api/tables")
+def get_tables(restaurant_id: int = 1, db: Session = Depends(get_db)):
+    tables = db.query(models.DiningTable).filter(models.DiningTable.restaurant_id == restaurant_id).all()
+    if not tables:
+        # Seed default Table 1 and Table 2
+        t1 = models.DiningTable(restaurant_id=restaurant_id, table_number=1, name="Table 1", capacity=4, qr_token="cfUmnVwm9GB1gD-2YS9e-mdLxgzvdtCh")
+        t2 = models.DiningTable(restaurant_id=restaurant_id, table_number=2, name="Table 2", capacity=4, qr_token="prRx1TKAUk4Ne7-9YS9e-mdLxgzvdtCh")
+        db.add_all([t1, t2])
+        db.commit()
+        tables = [t1, t2]
+    return tables
+
+
+@app.post("/api/tables")
+def create_table(data: dict, restaurant_id: int = 1, db: Session = Depends(get_db)):
+    tbl_num = data.get("table_number") or ((db.query(func.max(models.DiningTable.table_number)).filter(models.DiningTable.restaurant_id == restaurant_id).scalar() or 0) + 1)
+    name = data.get("name") or f"Table {tbl_num}"
+    capacity = data.get("capacity", 4)
+    qr_token = data.get("qr_token") or f"token-{uuid.uuid4().hex[:16]}"
+    
+    new_tbl = models.DiningTable(
+        restaurant_id=restaurant_id,
+        table_number=tbl_num,
+        name=name,
+        capacity=capacity,
+        qr_token=qr_token
+    )
+    db.add(new_tbl)
+    db.commit()
+    db.refresh(new_tbl)
+    return new_tbl
+
+
+@app.delete("/api/tables/{table_id}")
+def delete_table(table_id: int, db: Session = Depends(get_db)):
+    tbl = db.query(models.DiningTable).filter(models.DiningTable.id == table_id).first()
+    if tbl:
+        db.delete(tbl)
+        db.commit()
+    return {"success": True}
+
+
+@app.get("/api/qr/{qr_token}")
+@app.get("/api/public/menu/{qr_token}")
+def get_qr_table_details(qr_token: str, db: Session = Depends(get_db)):
+    tbl = db.query(models.DiningTable).filter(models.DiningTable.qr_token == qr_token).first()
+    if tbl:
+        return {
+            "restaurant_id": tbl.restaurant_id,
+            "table_number": tbl.table_number,
+            "table_name": tbl.name,
+            "qr_token": tbl.qr_token,
+            "capacity": tbl.capacity
+        }
+    return {
+        "restaurant_id": 1,
+        "table_number": 1,
+        "table_name": "Table #01",
+        "qr_token": qr_token,
+        "capacity": 4
+    }
+
 
 
 @app.get("/api/products")

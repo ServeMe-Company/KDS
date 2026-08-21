@@ -20,6 +20,10 @@ except Exception as e:
     print("Falling back to SQLite (sqlite:///./serveme.db) for local development.")
     SQLALCHEMY_DATABASE_URL = "sqlite:///./serveme.db"
     engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+    with engine.connect() as conn:
+        conn.exec_driver_sql("PRAGMA journal_mode=WAL;")
+        conn.exec_driver_sql("PRAGMA synchronous=NORMAL;")
+
 
 # Create a session local class for database interactions
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

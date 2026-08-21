@@ -1,11 +1,8 @@
 const getBackendUrls = () => {
   const hostname = window.location.hostname;
+  const protocol = window.location.protocol;
   
-  // Check if we are running locally
-  const isLocal = hostname === 'localhost' || hostname === '127.0.0.1' || hostname.startsWith('192.168.') || hostname.startsWith('10.');
-  
-  // Check for environment variables set during build
-  const envApiUrl = import.meta.env.VITE_API_URL;
+  const envApiUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL;
   
   if (envApiUrl) {
     const secure = envApiUrl.startsWith('https');
@@ -17,19 +14,19 @@ const getBackendUrls = () => {
     };
   }
 
-  // If local dev but no env variable is set
-  if (isLocal) {
+  if (hostname.includes('serveme.in')) {
     return {
-      api: `http://${hostname}:8000`,
-      ws: `ws://${hostname}:8000`
+      api: 'https://vendor.serveme.in',
+      ws: 'wss://vendor.serveme.in'
     };
   }
 
-  // Deployed in production but no environment variable configured
+  const apiScheme = protocol === 'https:' ? 'https:' : 'http:';
+  const wsScheme = protocol === 'https:' ? 'wss:' : 'ws:';
+
   return {
-    api: '',
-    ws: '',
-    isMissingConfig: true
+    api: `${apiScheme}//${hostname}:8000`,
+    ws: `${wsScheme}//${hostname}:8000`
   };
 };
 
@@ -37,4 +34,8 @@ const urls = getBackendUrls();
 
 export const API_URL = urls.api;
 export const WS_URL = urls.ws;
-export const IS_MISSING_CONFIG = urls.isMissingConfig;
+export const QR_MENU_BASE_URL = 'https://qr-menu.serveme.in';
+export const VENDOR_BASE_URL = 'https://vendor.serveme.in';
+export const IS_MISSING_CONFIG = false;
+
+

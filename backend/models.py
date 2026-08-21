@@ -50,11 +50,26 @@ class MenuItem(Base):
     category = relationship("Category", back_populates="menu_items")
 
 
+class DiningTable(Base):
+    __tablename__ = "tables"
+
+    id = Column(Integer, primary_key=True, index=True)
+    restaurant_id = Column(Integer, ForeignKey("restaurants.id", ondelete="CASCADE"), nullable=False)
+    table_number = Column(Integer, nullable=False)
+    name = Column(String(100), nullable=False)
+    capacity = Column(Integer, default=4)
+    qr_token = Column(String(255), unique=True, index=True, nullable=False)
+    is_active = Column(Boolean, default=True)
+
+
 class OrderStatus(str, enum.Enum):
     PENDING = "pending"
+    ACCEPTED = "accepted"
+    PREPARING = "preparing"
     COOKING = "cooking"
     READY = "ready"
     COMPLETED = "completed"
+    CANCELLED = "cancelled"
 
 
 class Order(Base):
@@ -63,16 +78,21 @@ class Order(Base):
     id = Column(Integer, primary_key=True, index=True)
     restaurant_id = Column(Integer, ForeignKey("restaurants.id", ondelete="CASCADE"), nullable=False)
     order_number = Column(Integer, nullable=False)
+    table_id = Column(Integer, ForeignKey("tables.id", ondelete="SET NULL"), nullable=True)
+    table_number = Column(Integer, nullable=True)
+    table_name = Column(String(100), nullable=True)
+    qr_token = Column(String(255), nullable=True)
     total_amount = Column(Float, nullable=False)
     status = Column(
-        Enum(OrderStatus, values_callable=lambda statuses: [status.value for status in statuses]),
+        String(50),
         nullable=False,
-        default=OrderStatus.PENDING,
+        default="pending",
     )
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     # Relationships
     restaurant = relationship("Restaurant")
+    table = relationship("DiningTable")
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
 
 

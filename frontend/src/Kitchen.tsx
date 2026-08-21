@@ -1,8 +1,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { io } from 'socket.io-client';
+import { API_URL } from './config';
 import { getKitchenOrders, updateKitchenOrderStatus, KitchenOrder } from './api/orders';
 import './App.css';
 import './kds.css';
+
 
 // ─── Helper: format elapsed time in MM:SS or Hh MMm ──────────────────────────
 function formatElapsed(createdAt?: string, now: number = Date.now()) {
@@ -13,7 +16,7 @@ function formatElapsed(createdAt?: string, now: number = Date.now()) {
   const diffSecs = Math.floor(diffMs / 1000);
   const mins = Math.floor(diffSecs / 60);
   const secs = diffSecs % 60;
-  
+
   if (mins >= 60) {
     const hours = Math.floor(mins / 60);
     const remMins = mins % 60;
@@ -174,11 +177,32 @@ export default function Kitchen() {
     return () => clearInterval(timer);
   }, []);
 
-  // Poll orders every 3 seconds
+  const pendingUpdatesRef = useRef<Map<string, string>>(new Map());
+
+  // Poll orders with optimistic status lock preservation
   const loadOrders = useCallback(async () => {
     try {
       const data = await getKitchenOrders();
-      setOrders(Array.isArray(data) ? data : []);
+      const rawList = Array.isArray(data) ? data : [];
+
+      // Apply locks from pendingUpdatesRef so background fetches never revert optimistic state!
+      const lockedOrders = rawList.map(order => {
+        const orderIdStr = String(order.id);
+        if (pendingUpdatesRef.current.has(orderIdStr)) {
+          const lockedStatus = pendingUpdatesRef.current.get(orderIdStr)!;
+          return { ...order, status: lockedStatus };
+        }
+        return order;
+      }).filter(order => {
+        const orderIdStr = String(order.id);
+        if (pendingUpdatesRef.current.has(orderIdStr)) {
+          const lockedStatus = pendingUpdatesRef.current.get(orderIdStr)!;
+          if (lockedStatus.toLowerCase() === 'completed') return false;
+        }
+        return true;
+      });
+
+      setOrders(lockedOrders);
       setError(null);
     } catch (err) {
       setError(
@@ -194,10 +218,19 @@ export default function Kitchen() {
   useEffect(() => {
     loadOrders();
 
-    const intervalId = window.setInterval(loadOrders, 3000);
+    const intervalId = window.setInterval(loadOrders, 1500);
+
+    const socket = io(API_URL, { path: '/socket.io' });
+    socket.on('connect', () => {
+      socket.emit('join_restaurant', { restaurant_id: 1 });
+    });
+    socket.on('order_update', () => {
+      loadOrders();
+    });
 
     return () => {
       window.clearInterval(intervalId);
+      socket.disconnect();
     };
   }, [loadOrders]);
 
@@ -236,38 +269,60 @@ export default function Kitchen() {
     playOrderChime(v);
   };
 
-  // Update order status function
+  // Instant 0ms Lock-Protected Order Status Update
   async function handleStatusChange(
     orderId: string,
     nextStatus: string,
   ) {
+    const orderIdStr = String(orderId);
+
+    // 1. Lock status to prevent background poll from reverting UI
+    pendingUpdatesRef.current.set(orderIdStr, nextStatus);
+
+    // 2. Instantly update UI state locally (0ms lag!)
+    setOrders(prevOrders => {
+      if (nextStatus.toLowerCase() === 'completed') {
+        return prevOrders.filter(o => String(o.id) !== orderIdStr);
+      }
+      return prevOrders.map(o => {
+        if (String(o.id) === orderIdStr) {
+          return { ...o, status: nextStatus };
+        }
+        return o;
+      });
+    });
+
+    // 3. Perform network sync in background
     try {
       await updateKitchenOrderStatus(orderId, nextStatus);
-      await loadOrders();
     } catch (error) {
-      alert(
-        error instanceof Error
-          ? error.message
-          : 'Failed to update order status.',
-      );
+      console.error('Optimistic status update failed, reloading', error);
+      pendingUpdatesRef.current.delete(orderIdStr);
+      loadOrders();
+    } finally {
+      setTimeout(() => {
+        pendingUpdatesRef.current.delete(orderIdStr);
+      }, 500);
     }
   }
 
-  // Column mapping
+
+
+  // Column mapping with status normalization
   const pendingOrders = orders.filter((order) => {
-    const status = (order.status || '').toLowerCase();
-    return status === 'pending' || status === 'accepted';
+    const s = (order.status || '').toLowerCase();
+    return s === 'pending' || s === 'accepted';
   });
 
-  const preparingOrders = orders.filter(
-    (order) =>
-      (order.status || '').toLowerCase() === 'preparing' || (order.status || '').toLowerCase() === 'cooking',
-  );
+  const preparingOrders = orders.filter((order) => {
+    const s = (order.status || '').toLowerCase();
+    return s === 'preparing' || s === 'cooking';
+  });
 
-  const readyOrders = orders.filter(
-    (order) =>
-      (order.status || '').toLowerCase() === 'ready',
-  );
+  const readyOrders = orders.filter((order) => {
+    const s = (order.status || '').toLowerCase();
+    return s === 'ready';
+  });
 
   const getTableLabel = (order: KitchenOrder): string | null => {
     if (order.tableName) return order.tableName;
@@ -277,6 +332,7 @@ export default function Kitchen() {
     if (order.tableId) return `Table ${order.tableId}`;
     return null;
   };
+
 
   const cardVariants = {
     initial: { opacity: 0, scale: 0.92, y: 15 },
@@ -409,9 +465,9 @@ export default function Kitchen() {
               style={{
                 background:
                   statusLower === 'pending' ? 'linear-gradient(135deg, #ef4444, #dc2626)' :
-                  statusLower === 'accepted' ? 'linear-gradient(135deg, #3b82f6, #2563eb)' :
-                  statusLower === 'preparing' || statusLower === 'cooking' ? 'linear-gradient(135deg, #f59e0b, #d97706)' :
-                  'linear-gradient(135deg, #10b981, #059669)',
+                    statusLower === 'accepted' ? 'linear-gradient(135deg, #3b82f6, #2563eb)' :
+                      statusLower === 'preparing' || statusLower === 'cooking' ? 'linear-gradient(135deg, #f59e0b, #d97706)' :
+                        'linear-gradient(135deg, #10b981, #059669)',
                 color: '#ffffff',
                 border: 'none',
                 padding: '10px 20px',
@@ -428,8 +484,8 @@ export default function Kitchen() {
             >
               <span className="btn-icon">
                 {statusLower === 'pending' ? '📥' :
-                 statusLower === 'accepted' ? '🔥' :
-                 statusLower === 'preparing' || statusLower === 'cooking' ? '✅' : '🤝'}
+                  statusLower === 'accepted' ? '🔥' :
+                    statusLower === 'preparing' || statusLower === 'cooking' ? '✅' : '🤝'}
               </span>
               <span className="btn-text">{nextAction.label}</span>
             </button>
@@ -564,9 +620,7 @@ export default function Kitchen() {
               <span className="column-count-badge">{pendingOrders.length}</span>
             </div>
             <div className="column-cards-container">
-              <AnimatePresence mode="popLayout">
-                {pendingOrders.map(order => renderOrderCard(order))}
-              </AnimatePresence>
+              {pendingOrders.map(order => renderOrderCard(order))}
               {pendingOrders.length === 0 && (
                 <div className="column-empty-state">
                   <p>No pending orders</p>
@@ -582,9 +636,7 @@ export default function Kitchen() {
               <span className="column-count-badge">{preparingOrders.length}</span>
             </div>
             <div className="column-cards-container">
-              <AnimatePresence mode="popLayout">
-                {preparingOrders.map(order => renderOrderCard(order))}
-              </AnimatePresence>
+              {preparingOrders.map(order => renderOrderCard(order))}
               {preparingOrders.length === 0 && (
                 <div className="column-empty-state">
                   <p>No active cooking items</p>
@@ -600,9 +652,7 @@ export default function Kitchen() {
               <span className="column-count-badge">{readyOrders.length}</span>
             </div>
             <div className="column-cards-container">
-              <AnimatePresence mode="popLayout">
-                {readyOrders.map(order => renderOrderCard(order))}
-              </AnimatePresence>
+              {readyOrders.map(order => renderOrderCard(order))}
               {readyOrders.length === 0 && (
                 <div className="column-empty-state">
                   <p>No orders ready yet</p>
@@ -612,6 +662,7 @@ export default function Kitchen() {
           </div>
         </div>
       )}
+
     </div>
   );
 }

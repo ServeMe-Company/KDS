@@ -7,7 +7,10 @@ ENV/
 # Database files
 backend/serveme.db
 *.db
+*.db-wal
+*.db-shm
 *.sqlite3
+
 
 # Python cache
 __pycache__/

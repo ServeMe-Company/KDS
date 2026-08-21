@@ -72,6 +72,33 @@ function App() {
     fetchMenu();
   }, [fetchMenu]);
 
+  const [activeOrderId, setActiveOrderId] = useState(() => localStorage.getItem('serveme_active_order_id') || null);
+  const [activeOrderDetails, setActiveOrderDetails] = useState(null);
+  const [isTrackingModalOpen, setIsTrackingModalOpen] = useState(true);
+
+  // Poll current order status for live tracking
+  const fetchOrderStatus = useCallback(async () => {
+    if (!activeOrderId) return;
+    try {
+      const res = await fetch(`${API_URL}/api/kitchen/orders/${activeOrderId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setActiveOrderDetails({
+          ...data,
+          updatedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        });
+      }
+    } catch (err) {
+      console.error("Error fetching order status", err);
+    }
+  }, [activeOrderId]);
+
+  useEffect(() => {
+    fetchOrderStatus();
+    const interval = setInterval(fetchOrderStatus, 3000);
+    return () => clearInterval(interval);
+  }, [fetchOrderStatus]);
+
   useEffect(() => {
     const socket = io(API_URL, {
       path: '/socket.io'
@@ -89,125 +116,22 @@ function App() {
       }
     });
 
+    socket.on('order_update', () => {
+      console.log('Real-time order status update received. Refreshing active order.');
+      fetchOrderStatus();
+    });
+
     return () => {
       socket.disconnect();
     };
-  }, [RESTAURANT_ID, fetchMenu]);
-
-  // Keep active category pill in view inside scrollable nav bar
-  useEffect(() => {
-    const activePill = document.querySelector('.category-pill.active');
-    if (activePill) {
-      activePill.scrollIntoView({
-        behavior: 'smooth',
-        block: 'nearest',
-        inline: 'center'
-      });
-    }
-  }, [activeCategory]);
-
-  const handleSearchChange = (val) => {
-    setSearchQuery(val);
-    
-    if (val.trim() && restaurant) {
-      // Find categories that have matching items for this new search query
-      const matchingCats = restaurant.categories.filter((category) =>
-        category.menu_items.some((item) =>
-          item.name.toLowerCase().includes(val.toLowerCase())
-        )
-      );
-      
-      if (matchingCats.length > 0) {
-        // If current activeCategory is NOT in the matching categories, switch to the first matching category
-        const isCurrentActiveMatching = matchingCats.some(cat => cat.id === activeCategory);
-        if (!isCurrentActiveMatching) {
-          setActiveCategory(matchingCats[0].id);
-        }
-      }
-    }
-  };
-
-  const handleCategoryClick = (e, catId) => {
-    e.preventDefault();
-    setSearchQuery('');
-    setActiveCategory(catId);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const addToCart = (item) => {
-    setCart((prev) => {
-      const currentQty = prev[item.id]?.quantity || 0;
-      if (item.stock !== undefined && item.stock !== null && currentQty >= item.stock) {
-        alert(`Sorry, only ${item.stock} quantity available in stock for "${item.name}".`);
-        return prev;
-      }
-      return {
-        ...prev,
-        [item.id]: {
-          ...item,
-          quantity: currentQty + 1,
-        },
-      };
-    });
-  };
-
-  const removeFromCart = (itemId) => {
-    setCart((prev) => {
-      const newCart = { ...prev };
-      if (newCart[itemId]) {
-        if (newCart[itemId].quantity > 1) {
-          newCart[itemId].quantity -= 1;
-        } else {
-          delete newCart[itemId];
-        }
-      }
-      // Auto close cart drawer if empty
-      const remainingItems = Object.values(newCart).reduce((sum, item) => sum + item.quantity, 0);
-      if (remainingItems === 0) {
-        setIsCartOpen(false);
-      }
-      return newCart;
-    });
-  };
-
-  const updateCartItemNotes = (itemId, notes) => {
-    setCart((prev) => {
-      if (!prev[itemId]) return prev;
-      return {
-        ...prev,
-        [itemId]: {
-          ...prev[itemId],
-          notes,
-        },
-      };
-    });
-  };
-
-  const toggleQuickNote = (itemId, noteText) => {
-    setCart((prev) => {
-      if (!prev[itemId]) return prev;
-      const currentNotes = prev[itemId].notes || '';
-      let notesList = currentNotes ? currentNotes.split(',').map(n => n.trim()).filter(Boolean) : [];
-      
-      if (notesList.includes(noteText)) {
-        notesList = notesList.filter(n => n !== noteText);
-      } else {
-        notesList.push(noteText);
-      }
-      
-      return {
-        ...prev,
-        [itemId]: {
-          ...prev[itemId],
-          notes: notesList.join(', '),
-        },
-      };
-    });
-  };
+  }, [RESTAURANT_ID, fetchMenu, fetchOrderStatus]);
 
   const handleCheckout = async () => {
     if (isCheckingOut) return;
     setIsCheckingOut(true);
+
+    const params = new URLSearchParams(window.location.search);
+    const qrToken = params.get('qr') || 'cfUmnVwm9GB1gD-2YS9e-mdLxgzvdtCh';
 
     const orderItems = Object.values(cart).map((item) => ({
       menu_item_id: item.id,
@@ -219,15 +143,24 @@ function App() {
       const response = await fetch(`${API_URL}/restaurants/${RESTAURANT_ID}/orders/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: orderItems }),
+        body: JSON.stringify({
+          items: orderItems,
+          qr_token: qrToken,
+          table_number: 1,
+          table_name: 'Table 1'
+        }),
       });
+
       if (!response.ok) {
         throw new Error("Could not submit order. Please try again.");
       }
       const data = await response.json();
       setOrderNumber(data.order_number);
+      setActiveOrderId(data.id);
+      localStorage.setItem('serveme_active_order_id', String(data.id));
       setCart({});
       setIsCartOpen(false);
+      setIsTrackingModalOpen(true);
     } catch (error) {
       console.error("Checkout failed", error);
       alert(error.message || "Place order failed. Check server connection.");
@@ -240,49 +173,211 @@ function App() {
   const totalItems = Object.values(cart).reduce((sum, item) => sum + item.quantity, 0);
   const totalPrice = Object.values(cart).reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
-  // If order is placed, show the success screen
-  if (orderNumber) {
+  // Determine current active step index for order tracking (1 to 5)
+  const getStepIndex = (statusStr) => {
+    const s = (statusStr || '').toLowerCase();
+    if (s === 'completed') return 5;
+    if (s === 'ready') return 4;
+    if (s === 'preparing' || s === 'cooking') return 3;
+    if (s === 'accepted') return 2;
+    return 1; // pending / received
+  };
+
+  const currentStep = activeOrderDetails ? getStepIndex(activeOrderDetails.status) : 1;
+
+  const trackingSteps = [
+    { step: 1, title: 'Order Received', desc: 'Order received and sent to kitchen' },
+    { step: 2, title: 'Accepted', desc: 'Restaurant accepted your order.' },
+    { step: 3, title: 'Preparing', desc: 'Chef is preparing your food.' },
+    { step: 4, title: 'Ready', desc: 'Your order is ready. A waiter is bringing it to your table.' },
+    { step: 5, title: 'Completed', desc: 'Order served' },
+  ];
+
+  const dateTag = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const formattedOrderBadge = activeOrderDetails?.orderNumber
+    ? `#SM-${dateTag}-${String(activeOrderDetails.orderNumber).replace(/^ORD-/, '')}`
+    : (orderNumber ? `#SM-${dateTag}-${String(orderNumber).padStart(4, '0')}` : '#SM-ORDER');
+
+  // Show Live Order Tracking modal if active
+  const renderTrackingModal = () => {
+    if (!activeOrderId || !isTrackingModalOpen) return null;
+
     return (
-      <div className="success-screen">
-        <div className="success-card" style={{
-          background: 'rgba(255, 255, 255, 0.05)',
-          backdropFilter: 'blur(24px)',
-          border: '1px solid rgba(255, 255, 255, 0.1)',
-          padding: '44px 32px',
-          borderRadius: '28px',
-          boxShadow: '0 30px 60px rgba(0,0,0,0.5)',
-          maxWidth: '420px',
-          width: '90%',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center'
+      <div style={{
+        position: 'fixed',
+        top: 0, left: 0, right: 0, bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.75)',
+        backdropFilter: 'blur(12px)',
+        zIndex: 9999,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '16px'
+      }}>
+        <div style={{
+          background: '#ffffff',
+          color: '#1e293b',
+          borderRadius: '24px',
+          width: '100%',
+          maxWidth: '460px',
+          padding: '24px',
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.4)',
+          position: 'relative',
+          maxHeight: '90vh',
+          overflowY: 'auto'
         }}>
-          <div style={{ fontSize: '48px', marginBottom: '16px', animation: 'bounce 2s infinite' }}>🛎️</div>
-          <h2>Order Received!</h2>
-          <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', marginTop: '12px', fontWeight: 600 }}>Your Token Number</div>
-          <h1 className="giant-number" style={{ margin: '8px 0 24px 0' }}>#{orderNumber}</h1>
-          <p style={{ margin: '0 0 16px 0', fontSize: '15px', color: 'rgba(255,255,255,0.9)', fontWeight: 500 }}>
-            👨‍🍳 The kitchen is now preparing your delicious meal!
-          </p>
-          <div style={{ margin: '0 0 32px 0', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <p style={{ margin: 0, fontSize: '13px', color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 }}>
-              Listen for your token number at the counter.
-            </p>
-            <p style={{ margin: 0, fontSize: '13px', color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 }}>
-              You can pay when picking up your food.
-            </p>
+          {/* Header */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <button
+                onClick={() => setIsTrackingModalOpen(false)}
+                style={{
+                  background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '36px', height: '36px',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+                  fontSize: '16px', color: '#64748b'
+                }}
+              >
+                ←
+              </button>
+              <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 800, color: '#0f172a' }}>Live Order Tracking</h2>
+            </div>
+            <span style={{
+              background: '#ef4444', color: '#ffffff', fontSize: '11px', fontWeight: 800,
+              padding: '6px 12px', borderRadius: '20px', letterSpacing: '0.5px'
+            }}>
+              {formattedOrderBadge}
+            </span>
           </div>
-          <button
-            className="checkout-btn"
-            style={{ width: '100%', background: 'linear-gradient(135deg, #f97316, #ea580c)', boxShadow: '0 6px 20px rgba(249, 115, 22, 0.3)' }}
-            onClick={() => { setOrderNumber(null); }}
-          >
-            Order More Dishes
-          </button>
+
+          {/* Dine-in Table & Estimated Time Banner */}
+          <div style={{
+            background: '#0f172a', borderRadius: '16px', padding: '16px 20px', color: '#ffffff',
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'
+          }}>
+            <div>
+              <div style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 700 }}>
+                DINE-IN TABLE
+              </div>
+              <div style={{ fontSize: '22px', fontWeight: 900, color: '#facc15', marginTop: '2px' }}>
+                {activeOrderDetails?.tableName || (activeOrderDetails?.tableNumber ? `Table #${String(activeOrderDetails.tableNumber).padStart(2, '0')}` : 'Table #01')}
+              </div>
+            </div>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 700 }}>
+                ESTIMATED TIME
+              </div>
+              <div style={{ fontSize: '15px', fontWeight: 700, color: '#ffffff', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                ⏱️ 20–30 min
+              </div>
+            </div>
+          </div>
+
+          {/* Vertical Stepper */}
+          <div style={{ position: 'relative', paddingLeft: '8px', marginBottom: '24px' }}>
+            {trackingSteps.map((s, idx) => {
+              const isPast = s.step < currentStep;
+              const isCurrent = s.step === currentStep;
+              const isLast = idx === trackingSteps.length - 1;
+
+              return (
+                <div key={s.step} style={{ display: 'flex', position: 'relative', paddingBottom: isLast ? '0' : '28px' }}>
+                  {/* Vertical Line Connector */}
+                  {!isLast && (
+                    <div style={{
+                      position: 'absolute',
+                      left: '19px',
+                      top: '36px',
+                      bottom: 0,
+                      width: '2px',
+                      background: isPast ? '#ef4444' : '#e2e8f0'
+                    }} />
+                  )}
+
+                  {/* Step Icon / Circle */}
+                  <div style={{
+                    width: '40px',
+                    height: '40px',
+                    borderRadius: '50%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontWeight: 800,
+                    fontSize: '14px',
+                    zIndex: 2,
+                    marginRight: '16px',
+                    flexShrink: 0,
+                    background: isCurrent ? '#ef4444' : (isPast ? '#ef4444' : '#f8fafc'),
+                    color: (isCurrent || isPast) ? '#ffffff' : '#94a3b8',
+                    border: (isCurrent || isPast) ? 'none' : '2px solid #e2e8f0',
+                    boxShadow: isCurrent ? '0 0 16px rgba(239, 68, 68, 0.4)' : 'none'
+                  }}>
+                    {isCurrent ? '🔥' : (isPast ? '✓' : s.step)}
+                  </div>
+
+                  {/* Step Content */}
+                  <div style={{ flex: 1, paddingTop: '2px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <h4 style={{
+                        margin: 0,
+                        fontSize: '16px',
+                        fontWeight: 800,
+                        color: (isCurrent || isPast) ? '#0f172a' : '#94a3b8'
+                      }}>
+                        {s.title}
+                      </h4>
+                      {isCurrent && (
+                        <span style={{
+                          background: '#fef2f2', color: '#ef4444', fontSize: '10px',
+                          fontWeight: 800, padding: '2px 8px', borderRadius: '12px',
+                          border: '1px solid #fca5a5'
+                        }}>
+                          IN PROGRESS
+                        </span>
+                      )}
+                    </div>
+                    <p style={{
+                      margin: '4px 0 0 0',
+                      fontSize: '13px',
+                      color: isCurrent ? '#475569' : (isPast ? '#64748b' : '#cbd5e1'),
+                      lineHeight: 1.4
+                    }}>
+                      {s.desc}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Footer Bar */}
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            borderTop: '1px solid #f1f5f9', paddingTop: '16px', marginTop: '8px'
+          }}>
+            <span style={{ fontSize: '12px', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              🔄 Updated at {activeOrderDetails?.updatedAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            </span>
+            <button
+              onClick={() => setIsTrackingModalOpen(false)}
+              style={{
+                background: '#0f172a',
+                color: '#ffffff',
+                border: 'none',
+                padding: '10px 20px',
+                borderRadius: '12px',
+                fontWeight: 700,
+                fontSize: '14px',
+                cursor: 'pointer',
+                boxShadow: '0 4px 12px rgba(15, 23, 42, 0.2)'
+              }}
+            >
+              Back to Menu
+            </button>
+          </div>
         </div>
       </div>
     );
-  }
+  };
 
   if (error) {
     return (
@@ -296,15 +391,40 @@ function App() {
 
   return (
     <div className="app-container">
+      {/* Live Order Tracking Modal */}
+      {renderTrackingModal()}
+
       {/* Header */}
-      <header className="header">
+      <header className="header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h1>{restaurant.name}</h1>
           <p style={{ fontSize: '12px', color: '#999', marginTop: '2px', fontWeight: 500 }}>
             ✨ Table Service
           </p>
         </div>
+        {activeOrderId && (
+          <button
+            onClick={() => setIsTrackingModalOpen(true)}
+            style={{
+              background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+              color: '#ffffff',
+              border: 'none',
+              padding: '8px 16px',
+              borderRadius: '20px',
+              fontWeight: 800,
+              fontSize: '12px',
+              cursor: 'pointer',
+              boxShadow: '0 4px 14px rgba(239, 68, 68, 0.4)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            🔥 Track Order
+          </button>
+        )}
       </header>
+
 
       {/* Search Bar */}
       <div className="search-container">
