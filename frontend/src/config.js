@@ -4,6 +4,15 @@ const getBackendUrls = () => {
   
   const envApiUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL;
   
+  // On Vercel preview/production domains (*.vercel.app), backend routes are served on same origin via vercel.json
+  if (hostname.includes('vercel.app')) {
+    const wsProto = protocol === 'https:' ? 'wss' : 'ws';
+    return {
+      api: window.location.origin,
+      ws: `${wsProto}://${hostname}`
+    };
+  }
+
   if (envApiUrl) {
     const secure = envApiUrl.startsWith('https');
     const wsProto = secure ? 'wss' : 'ws';
@@ -29,6 +38,7 @@ const getBackendUrls = () => {
     ws: `${wsScheme}//${hostname}:8000`
   };
 };
+
 
 const urls = getBackendUrls();
 

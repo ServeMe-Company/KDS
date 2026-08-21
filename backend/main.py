@@ -169,15 +169,35 @@ def create_restaurant(restaurant: schemas.RestaurantCreate, db: Session = Depend
     db.refresh(db_restaurant)
     return db_restaurant
 
-# 2. Get a Restaurant and its Full Menu (accepts admin query parameter to return all or only active items)
-@app.get("/restaurants/{restaurant_id}", response_model=schemas.RestaurantResponse)
+# 2. Get a Restaurant and its Full Menu
+@app.get("/restaurants/{restaurant_id}")
 def get_restaurant_menu(restaurant_id: int, admin: bool = False, db: Session = Depends(get_db)):
     db_restaurant = db.query(models.Restaurant).filter(models.Restaurant.id == restaurant_id).first()
     if db_restaurant is None:
-        raise HTTPException(status_code=404, detail="Restaurant not found")
+        # Auto-seed default restaurant 1 ("Serve Me") with menu categories on fresh DB
+        db_restaurant = models.Restaurant(id=restaurant_id, name="Serve Me")
+        db.add(db_restaurant)
+        db.commit()
+        db.refresh(db_restaurant)
         
+        cat_starter = models.Category(name="Starter", restaurant_id=db_restaurant.id)
+        db.add(cat_starter)
+        db.commit()
+        db.refresh(cat_starter)
+        
+        items = [
+            models.MenuItem(name="French Fries", price=400.0, category_id=cat_starter.id, is_active=True, is_available=True, tags="Special"),
+            models.MenuItem(name="Peri Peri French Fries", price=180.0, category_id=cat_starter.id, is_active=True, is_available=True),
+            models.MenuItem(name="Chilli Paneer", price=450.0, category_id=cat_starter.id, is_active=True, is_available=True, tags="Special"),
+            models.MenuItem(name="Special Garlic Bread", price=250.0, category_id=cat_starter.id, is_active=True, is_available=True, stock=10)
+        ]
+        db.add_all(items)
+        db.commit()
+        db.refresh(db_restaurant)
+
     if admin:
         return db_restaurant
+
 
     # Filter out inactive/unapplied menu items for customer menu
     filtered_categories = []
