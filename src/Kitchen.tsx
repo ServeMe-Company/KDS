@@ -184,7 +184,14 @@ export default function Kitchen() {
   const loadOrders = useCallback(async () => {
     try {
       const data = await getKitchenOrders();
-      const rawList = Array.isArray(data) ? data : [];
+      let rawList: KitchenOrder[] = [];
+      if (Array.isArray(data)) {
+        rawList = data;
+      } else if (data && typeof data === 'object' && Array.isArray((data as any).orders)) {
+        rawList = (data as any).orders;
+      } else if (data && typeof data === 'object' && Array.isArray((data as any).data)) {
+        rawList = (data as any).data;
+      }
 
       // Apply locks from pendingUpdatesRef so background fetches never revert optimistic state!
       const lockedOrders = rawList.map(order => {
@@ -205,6 +212,7 @@ export default function Kitchen() {
 
       setOrders(lockedOrders);
       setError(null);
+
     } catch (err) {
       console.warn("Backend fetch failed, waiting for connection:", err);
       setError(null);
@@ -308,21 +316,31 @@ export default function Kitchen() {
 
 
 
-  // Column mapping with status normalization
+  // Column mapping with normalized status matching
   const pendingOrders = orders.filter((order) => {
-    const s = (order.status || '').toLowerCase();
-    return s === 'pending' || s === 'accepted';
+    const s = (order.status || '').toLowerCase().trim();
+    return (
+      s === 'pending' ||
+      s === 'accepted' ||
+      s === 'order received' ||
+      s === 'received' ||
+      s === 'placed' ||
+      s === 'new' ||
+      s === 'created' ||
+      (!['preparing', 'cooking', 'in progress', 'ready', 'ready for pickup', 'cooked', 'completed', 'cancelled'].includes(s))
+    );
   });
 
   const preparingOrders = orders.filter((order) => {
-    const s = (order.status || '').toLowerCase();
-    return s === 'preparing' || s === 'cooking';
+    const s = (order.status || '').toLowerCase().trim();
+    return s === 'preparing' || s === 'cooking' || s === 'in progress';
   });
 
   const readyOrders = orders.filter((order) => {
-    const s = (order.status || '').toLowerCase();
-    return s === 'ready';
+    const s = (order.status || '').toLowerCase().trim();
+    return s === 'ready' || s === 'ready for pickup' || s === 'cooked';
   });
+
 
   const getTableLabel = (order: KitchenOrder): string | null => {
     if (order.tableName) return order.tableName;
