@@ -6,14 +6,13 @@ export const API_BASE_URL =
     ? envUrl
     : (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
       ? 'http://localhost:8000'
-      : window.location.origin;
+      : ''; // Relative path uses Vercel's vercel.json proxy rewrite, 100% eliminating browser CORS checks!
 
 export async function apiFetch<T>(
   endpoint: string,
   options?: RequestInit,
 ): Promise<T> {
-  const baseUrl = API_BASE_URL.replace(/\/$/, '');
-  const url = `${baseUrl}${endpoint}`;
+  const url = `${API_BASE_URL}${endpoint}`;
   const method = (options?.method || 'GET').toUpperCase();
 
   const headers: Record<string, string> = {
@@ -21,7 +20,6 @@ export async function apiFetch<T>(
     ...(options?.headers as Record<string, string> || {}),
   };
 
-  // Do not send Content-Type header on GET/HEAD requests to prevent CORS preflight blocks
   if (method !== 'GET' && method !== 'HEAD') {
     headers["Content-Type"] = "application/json";
   }

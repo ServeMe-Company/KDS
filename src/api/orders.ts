@@ -19,7 +19,7 @@ export interface KitchenOrder {
   createdAt?: string;
 }
 
-// Fetch kitchen orders with multi-endpoint fallback
+// Fetch kitchen orders via Vercel proxy route
 export async function getKitchenOrders(): Promise<KitchenOrder[]> {
   try {
     return await apiFetch<KitchenOrder[]>("/api/kitchen/orders");

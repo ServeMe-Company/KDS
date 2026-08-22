@@ -227,7 +227,7 @@ export default function Kitchen() {
 
     const intervalId = window.setInterval(loadOrders, 1500);
 
-    const socket = io(WS_URL, { path: '/socket.io', transports: ['websocket', 'polling'] });
+    const socket = io(WS_URL, { path: '/socket.io', transports: ['polling', 'websocket'] });
 
     socket.on('connect', () => {
       socket.emit('join_restaurant', { restaurant_id: 1 });
