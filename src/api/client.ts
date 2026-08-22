@@ -1,17 +1,17 @@
 import { API_URL } from "../config";
 
 const envUrl = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL;
-const API_BASE_URL =
-  (envUrl && !envUrl.includes(':3000'))
+export const API_BASE_URL =
+  (envUrl && !envUrl.includes(':3000') && !envUrl.includes('localhost'))
     ? envUrl
-    : (API_URL || `http://${window.location.hostname}:8000`);
-
+    : (API_URL || 'https://vendor.serveme.in');
 
 export async function apiFetch<T>(
   endpoint: string,
   options?: RequestInit,
 ): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+  const url = `${API_BASE_URL.replace(/\/$/, '')}${endpoint}`;
+  const response = await fetch(url, {
     ...options,
     headers: {
       "Content-Type": "application/json",
