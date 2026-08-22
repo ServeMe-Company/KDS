@@ -10,20 +10,31 @@ export async function apiFetch<T>(
   endpoint: string,
   options?: RequestInit,
 ): Promise<T> {
-  const url = `${API_BASE_URL.replace(/\/$/, '')}${endpoint}`;
+  const baseUrl = API_BASE_URL.replace(/\/$/, '');
+  const url = `${baseUrl}${endpoint}`;
+  const method = (options?.method || 'GET').toUpperCase();
+
+  const headers: Record<string, string> = {
+    "Accept": "application/json",
+    ...(options?.headers as Record<string, string> || {}),
+  };
+
+  // Do not send Content-Type header on GET/HEAD requests to prevent CORS preflight blocks
+  if (method !== 'GET' && method !== 'HEAD') {
+    headers["Content-Type"] = "application/json";
+  }
+
   const response = await fetch(url, {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(options?.headers || {}),
-    },
+    method,
+    headers,
   });
 
   const data = await response.json().catch(() => null);
 
   if (!response.ok) {
     throw new Error(
-      data?.error || `Request failed with status ${response.status}`,
+      data?.error || data?.message || `Request failed with status ${response.status}`,
     );
   }
 
