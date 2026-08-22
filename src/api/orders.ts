@@ -19,52 +19,25 @@ export interface KitchenOrder {
   createdAt?: string;
 }
 
-// Fetch kitchen orders via Vercel proxy route
+// Fetch kitchen orders from /api/kitchen/orders
 export async function getKitchenOrders(): Promise<KitchenOrder[]> {
-  try {
-    return await apiFetch<KitchenOrder[]>("/api/kitchen/orders");
-  } catch {
-    try {
-      return await apiFetch<KitchenOrder[]>("/api/orders");
-    } catch {
-      return await apiFetch<KitchenOrder[]>("/orders");
-    }
-  }
+  return await apiFetch<KitchenOrder[]>("/api/kitchen/orders");
 }
 
 export async function getKitchenOrderById(orderId: string): Promise<KitchenOrder> {
-  try {
-    return await apiFetch<KitchenOrder>(`/api/kitchen/orders/${encodeURIComponent(orderId)}`);
-  } catch {
-    return await apiFetch<KitchenOrder>(`/orders/${encodeURIComponent(orderId)}`);
-  }
+  return await apiFetch<KitchenOrder>(`/api/kitchen/orders/${encodeURIComponent(orderId)}`);
 }
 
-// Update order status with universal (PATCH / PUT / POST) multi-endpoint adapter
+// Update order kitchen status at /api/kitchen/orders/:orderId/status
 export async function updateKitchenOrderStatus(
   orderId: string,
   status: string,
 ): Promise<KitchenOrder> {
-  const encId = encodeURIComponent(orderId);
-  const body = JSON.stringify({ status });
-
-  const routes = [
-    `/api/kitchen/orders/${encId}/status`,
-    `/orders/${encId}/status`,
-    `/api/orders/${encId}/status`
-  ];
-
-  const methods = ["PATCH", "PUT", "POST"];
-
-  for (const route of routes) {
-    for (const method of methods) {
-      try {
-        return await apiFetch<KitchenOrder>(route, { method, body });
-      } catch {
-        // Try next method/route variant
-      }
-    }
-  }
-
-  throw new Error(`Failed to update status for order ${orderId}`);
+  return await apiFetch<KitchenOrder>(
+    `/api/kitchen/orders/${encodeURIComponent(orderId)}/status`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    },
+  );
 }
