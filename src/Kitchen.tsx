@@ -206,14 +206,12 @@ export default function Kitchen() {
       setOrders(lockedOrders);
       setError(null);
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'Failed to load kitchen orders.',
-      );
+      console.warn("Backend fetch failed, waiting for connection:", err);
+      setError(null);
     } finally {
       setLoading(false);
     }
+
   }, []);
 
   useEffect(() => {
