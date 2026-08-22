@@ -77,31 +77,68 @@ function getNextStatus(status: string) {
 }
 
 // ─── Web Audio Chime Notification ──────────────────────────────────────────────
+let sharedAudioCtx: AudioContext | null = null;
+
+function getAudioContext() {
+  if (!sharedAudioCtx && typeof window !== 'undefined') {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (AudioContextClass) {
+      sharedAudioCtx = new AudioContextClass();
+    }
+  }
+  if (sharedAudioCtx && sharedAudioCtx.state === 'suspended') {
+    sharedAudioCtx.resume().catch(() => {});
+  }
+  return sharedAudioCtx;
+}
+
+if (typeof window !== 'undefined') {
+  const unlockAudio = () => {
+    const ctx = getAudioContext();
+    if (ctx && ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+  };
+  window.addEventListener('click', unlockAudio, { once: false });
+  window.addEventListener('touchstart', unlockAudio, { once: false });
+  window.addEventListener('keydown', unlockAudio, { once: false });
+}
+
+function playChimeNotes(ctx: AudioContext, volume: number) {
+  const notes = [
+    { freq: 523.25, time: 0, duration: 0.25 },   // C5
+    { freq: 659.25, time: 0.1, duration: 0.35 },  // E5
+    { freq: 783.99, time: 0.2, duration: 0.45 },  // G5
+    { freq: 1046.50, time: 0.32, duration: 0.6 }  // C6 (bright loud ding)
+  ];
+
+  notes.forEach(({ freq, time, duration }) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq, ctx.currentTime + time);
+    gain.gain.setValueAtTime(0, ctx.currentTime);
+    gain.gain.setValueAtTime(0.5 * volume, ctx.currentTime + time);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + time + duration);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(ctx.currentTime + time);
+    osc.stop(ctx.currentTime + time + duration);
+  });
+}
+
 function playOrderChime(volume = 0.5) {
   try {
-    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioContextClass) return;
-    const ctx = new AudioContextClass();
-    const notes = [
-      { freq: 523.25, time: 0, duration: 0.25 },
-      { freq: 659.25, time: 0.1, duration: 0.35 },
-      { freq: 783.99, time: 0.2, duration: 0.45 }
-    ];
-    notes.forEach(({ freq, time, duration }) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(freq, ctx.currentTime + time);
-      gain.gain.setValueAtTime(0, ctx.currentTime);
-      gain.gain.setValueAtTime(0.2 * volume, ctx.currentTime + time);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + time + duration);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(ctx.currentTime + time);
-      osc.stop(ctx.currentTime + time + duration);
-    });
-  } catch (e) {
-    console.error('Audio error:', e);
+    const ctx = getAudioContext();
+    if (!ctx) return;
+
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(() => playChimeNotes(ctx, volume)).catch(() => playChimeNotes(ctx, volume));
+    } else {
+      playChimeNotes(ctx, volume);
+    }
+  } catch (err) {
+    console.warn("Audio chime playback failed:", err);
   }
 }
 
