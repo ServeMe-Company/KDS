@@ -227,18 +227,32 @@ export default function Kitchen() {
 
     const intervalId = window.setInterval(loadOrders, 1500);
 
-    const socket = io(WS_URL, { path: '/socket.io', transports: ['polling', 'websocket'] });
+    let socket: ReturnType<typeof io> | null = null;
+    try {
+      socket = io(WS_URL, {
+        path: '/socket.io',
+        transports: ['websocket', 'polling'],
+        reconnectionAttempts: 2,
+        timeout: 3000,
+      });
 
-    socket.on('connect', () => {
-      socket.emit('join_restaurant', { restaurant_id: 1 });
-    });
-    socket.on('order_update', () => {
-      loadOrders();
-    });
+      socket.on('connect', () => {
+        socket?.emit('join_restaurant', { restaurant_id: 1 });
+      });
+      socket.on('order_update', () => {
+        loadOrders();
+      });
+      socket.on('connect_error', () => {
+        // Silent disconnect if WebSocket endpoint returns 404, fallback to REST polling
+        socket?.disconnect();
+      });
+    } catch {
+      // Quiet fallback to REST polling
+    }
 
     return () => {
       window.clearInterval(intervalId);
-      socket.disconnect();
+      if (socket) socket.disconnect();
     };
   }, [loadOrders]);
 
