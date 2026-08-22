@@ -19,24 +19,57 @@ export interface KitchenOrder {
   createdAt?: string;
 }
 
-export function getKitchenOrders() {
-  return apiFetch<KitchenOrder[]>("/api/kitchen/orders");
+// Fetch kitchen orders with multi-endpoint fallback for vendor.serveme.in
+export async function getKitchenOrders(): Promise<KitchenOrder[]> {
+  try {
+    return await apiFetch<KitchenOrder[]>("/api/kitchen/orders");
+  } catch {
+    try {
+      return await apiFetch<KitchenOrder[]>("/api/orders");
+    } catch {
+      return await apiFetch<KitchenOrder[]>("/orders");
+    }
+  }
 }
 
-export function getKitchenOrderById(orderId: string) {
-  return apiFetch<KitchenOrder>(`/api/kitchen/orders/${encodeURIComponent(orderId)}`);
+export async function getKitchenOrderById(orderId: string): Promise<KitchenOrder> {
+  try {
+    return await apiFetch<KitchenOrder>(`/api/kitchen/orders/${encodeURIComponent(orderId)}`);
+  } catch {
+    return await apiFetch<KitchenOrder>(`/orders/${encodeURIComponent(orderId)}`);
+  }
 }
 
-
-export function updateKitchenOrderStatus(
+// Update order status with multi-endpoint fallback for vendor.serveme.in
+export async function updateKitchenOrderStatus(
   orderId: string,
   status: string,
-) {
-  return apiFetch<KitchenOrder>(
-    `/api/kitchen/orders/${encodeURIComponent(orderId)}/status`,
-    {
-      method: "PATCH",
-      body: JSON.stringify({ status }),
-    },
-  );
+): Promise<KitchenOrder> {
+  try {
+    return await apiFetch<KitchenOrder>(
+      `/api/kitchen/orders/${encodeURIComponent(orderId)}/status`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      },
+    );
+  } catch {
+    try {
+      return await apiFetch<KitchenOrder>(
+        `/orders/${encodeURIComponent(orderId)}/status`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ status }),
+        },
+      );
+    } catch {
+      return await apiFetch<KitchenOrder>(
+        `/api/orders/${encodeURIComponent(orderId)}/status`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ status }),
+        },
+      );
+    }
+  }
 }
