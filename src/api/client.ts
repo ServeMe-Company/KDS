@@ -4,7 +4,9 @@ const envUrl = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL
 export const API_BASE_URL =
   (envUrl && !envUrl.includes(':3000') && !envUrl.includes('localhost'))
     ? envUrl
-    : (API_URL || 'https://vendor.serveme.in');
+    : (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+      ? 'http://localhost:8000'
+      : window.location.origin;
 
 export async function apiFetch<T>(
   endpoint: string,

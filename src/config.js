@@ -1,9 +1,10 @@
 const getBackendUrls = () => {
   const hostname = window.location.hostname;
+  const protocol = window.location.protocol;
   
   const envApiUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL;
 
-  if (envApiUrl) {
+  if (envApiUrl && !envApiUrl.includes('localhost')) {
     const secure = envApiUrl.startsWith('https');
     const wsProto = secure ? 'wss' : 'ws';
     const cleanHost = envApiUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
@@ -21,10 +22,11 @@ const getBackendUrls = () => {
     };
   }
 
-  // Default production fallback for standalone KDS (points to live Vendor backend)
+  // Production Vercel deployment: use same-origin proxy to completely eliminate browser CORS blocks
+  const wsProto = protocol === 'https:' ? 'wss' : 'ws';
   return {
-    api: 'https://vendor.serveme.in',
-    ws: 'wss://vendor.serveme.in'
+    api: window.location.origin,
+    ws: `${wsProto}://${hostname}`
   };
 };
 
